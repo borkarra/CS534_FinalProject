@@ -114,7 +114,7 @@ def convert_isrc_to_year(isrc):
 		return np.nan
 
 
-def train_and_validate(train):
+def train_and_validate(train, test):
 	print "Preparing dev set..."
 	for col in train.columns:
 		if train[col].dtype == object:
@@ -127,9 +127,6 @@ def train_and_validate(train):
 	# Split off part of the data to be used as dev set
 	X_train, X_dev, Y_train, Y_dev = train_test_split(train_X, train_Y)
 
-	X_test = test.drop(['id'], axis=1)
-	ids = test['id'].values
-
 	lgb_train = lgb.Dataset(X_train, Y_train)
 	lgb_dev = lgb.Dataset(X_dev, Y_dev)
 
@@ -138,10 +135,21 @@ def train_and_validate(train):
 	# Train the model according to the parameters at the top of the file
 	print "Training model..."
 	lgb_model = lgb.train(params, train_set = lgb_train, valid_sets = lgb_dev, verbose_eval=5)
-	#predictions = lgb_model.predict(X_test)
+	print "Done."
+	return lgb_model, test
 
+def generate_predictions(lgb_model, test):
+	print "Generating predictions for test set..."
+	X_test = test.drop(['id'], axis=1)
+	ids = test['id'].values
+	predictions = lgb_model.predict(X_test)
+	output = pd.DataFrame()
+	output['ids'] = ids
+	output['target'] = predictions
+	output.to_csv('submission.csv.gz', compression = 'gzip', index=False, float_format = '%.5f')
 
 if __name__ == "__main__":
 	train, test, members, songs, songs_extra = load_data()
 	train, test, members = merge_and_fix_data(train, test, songs, songs_extra, members)
-	train_and_validate(train)
+	lgb_model, test = train_and_validate(train, test)
+	generate_predictions(lgb_model, test)
