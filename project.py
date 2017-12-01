@@ -3,6 +3,7 @@ import pandas as pd #used to import csv files easily
 import lightgbm as lgb #gradient boosted tree builder
 from sklearn.model_selection import train_test_split #used to easily split data into feature vectors and labels
 from sklearn.metrics import mean_squared_error
+import time
 
 data_folder = '/Users/DJ-M/Desktop/Univ/OSU/Fall17/CS534/Project/data/'
 
@@ -18,7 +19,7 @@ params = {
         'feature_fraction': 0.9,
         'feature_fraction_seed': 1,
         'max_bin': 256,
-        'num_rounds': 100,
+        'num_rounds': 200,
         'metric' : 'auc'
 }
 
@@ -113,6 +114,7 @@ def convert_isrc_to_year(isrc):
 
 
 def train_and_validate(train):
+    
 	print "Preparing dev set..."
 	for col in train.columns:
 		if train[col].dtype == object:
@@ -127,14 +129,38 @@ def train_and_validate(train):
 	init_headers += list(one_hot_sst) + list(one_hot_ssn) + list(one_hot_st)
 	train.drop(['source_system_tab','source_screen_name','source_type'], axis=1, inplace=True)
 	train = pd.concat([train, one_hot_sst, one_hot_ssn, one_hot_st], axis=1)
+	
 	for head in init_headers:
-	    print head
 	    if head != 'msno' and head != 'song_id':
 	        train[head] = train[head].astype(np.uint8)
 	    else:
 	        train[head] = train[head].astype('category')
-
+	        
+	one_hot_final = train
+	
+	to_one = ['song_length', 'membership_days', 'isrc', 'name', 'lyricist', 'composer', 'artist_name', 'genre_ids', 'target'] + init_headers
+	
+	for head in list(train):
+	    if head not in to_one:
+	        print head
+	        start = time.time()
+	        one_hot = pd.get_dummies(train[head])
+	        one_hot_final = one_hot_final.drop([head], axis=1)
+	        for one_head in list(one_hot):
+	            one_hot_final[head + '_' + str(one_head)] = one_hot[one_head]
+	        print 'run time:', time.time() - start, '\n'
+	
+	train = one_hot_final
+	
+	for head in list(train):
+	    if head == 'target':
+	        train[head] = train[head].astype(np.uint8)
+	    if head not in to_one:
+	        train[head] = train[head].astype(np.uint8)
+	            
 	print "Done."
+	
+	print "Cross validation..."
 
 	train_X = train.drop(['target'], axis=1)
 	train_Y = y_train = train['target'].values
@@ -155,18 +181,14 @@ def train_and_validate(train):
 	lgb_model = lgb.train(params, train_set = lgb_train, valid_sets = lgb_dev, verbose_eval=5)
 	#predictions = lgb_model.predict(X_test)
 	
-	return lgb_model, X_dev, Y_dev
+	return lgb_model, X_dev, Y_dev, train
 
 
 if __name__ == "__main__":
 	train, test, members, songs, songs_extra = load_data()
 	train, test, members = merge_and_fix_data(train, test, songs, songs_extra, members)
-	lgb_model, X_dev, Y_dev = train_and_validate(train)
+	lgb_model, X_dev, Y_dev, train = train_and_validate(train)
 	
 	y_pred = lgb_model.predict(X_dev, num_iteration=lgb_model.best_iteration)
 	print 1 - mean_squared_error(Y_dev, y_pred) ** 0.5
-
-
-
-
 
