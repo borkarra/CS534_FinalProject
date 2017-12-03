@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd #used to import csv files easily
 import lightgbm as lgb #gradient boosted tree builder
+from graphviz import Digraph
+import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split #used to easily split data into feature vectors and labels
 
 data_folder = './data/'
@@ -92,13 +94,23 @@ def merge_and_fix_data(train, test, songs, songs_extra, members):
 
 	# Sometimes fields are left empty so we fill them with a placeholder to avoid errors
 	print "Fixing empty fields..."
-	train.song_length.fillna(200000,inplace=True)
-	train.song_length = train.song_length.astype(np.uint32)
+	train.song_length.fillna(0,inplace=True)
+	train.song_length = train.song_length.astype(np.uint16)
 	train.song_id = train.song_id.astype('category')
 	
 	test.song_length.fillna(200000,inplace=True)
 	test.song_length = test.song_length.astype(np.uint32)
 	test.song_id = test.song_id.astype('category')
+	
+
+        #categorising song_length
+	train['song_length'] = train['song_length'].apply(song_length_categorise).astype('category')
+	test['song_length'] = test['song_length'].apply(song_length_categorise).astype('category')
+
+	
+        #categorising membership_days
+	train['membership_days'] = train['membership_days'].apply(song_length_categorise).astype('category')
+	test['membership_days'] = test['membership_days'].apply(song_length_categorise).astype('category')
 
 	print "Done."
 	return train, test, members
@@ -112,9 +124,33 @@ def convert_isrc_to_year(isrc):
 			return 2000 + int(isrc[5:7])
 	else:
 		return np.nan
+# categorize song_length to short medium, and long
+def song_length_categorise (length):
 
+        if 0<length < 1000:
+                return 'short'
+        elif 1000<=length <2000 :
+                return 'medium'
+        elif length >= 2000:
+                return 'long'
+        else:
 
-def train_and_validate(train, test):
+         return 'none'
+def membership_days_categorise (length):
+
+        if 0<length < 500:
+                return 'short'
+        elif 500<=length <1500 :
+                return 'medium'
+        elif length >= 1500:
+                return 'long'
+        else:
+
+         return 'none'
+        
+        
+
+def train_and_validate(train):
 	print "Preparing dev set..."
 	for col in train.columns:
 		if train[col].dtype == object:
@@ -127,6 +163,9 @@ def train_and_validate(train, test):
 	# Split off part of the data to be used as dev set
 	X_train, X_dev, Y_train, Y_dev = train_test_split(train_X, train_Y)
 
+	X_test = test.drop(['id'], axis=1)
+	ids = test['id'].values
+
 	lgb_train = lgb.Dataset(X_train, Y_train)
 	lgb_dev = lgb.Dataset(X_dev, Y_dev)
 
@@ -135,21 +174,42 @@ def train_and_validate(train, test):
 	# Train the model according to the parameters at the top of the file
 	print "Training model..."
 	lgb_model = lgb.train(params, train_set = lgb_train, valid_sets = lgb_dev, verbose_eval=5)
-	print "Done."
-	return lgb_model, test
+	lgb_model.save_model('model.txt', num_iteration=lgb_model.best_iteration)
+	
+	"""
+	ax = lgb.plot_importance(lgb_model, max_num_features=10)
+        plt.show()
+        
+        ax = lgb.plot_tree(lgb_model, tree_index=85, figsize=(20, 8), show_info=['split_gain'])
+        plt.show()
 
-def generate_predictions(lgb_model, test):
-	print "Generating predictions for test set..."
-	X_test = test.drop(['id'], axis=1)
-	ids = test['id'].values
-	predictions = lgb_model.predict(X_test)
-	output = pd.DataFrame()
-	output['ids'] = ids
-	output['target'] = predictions
-	output.to_csv('submission.csv.gz', compression = 'gzip', index=False, float_format = '%.5f')
+        print('Plot 84th tree with graphviz...')
+        graph = lgb.create_tree_digraph(lgb_model, tree_index=84, name='Tree84')
+        graph.render(view=True)
+        """
+        
+        predictions = lgb_model.predict(X_dev)
+	#predictions = lgb_model.predict(X_test)
+        predicttarget=predictions
+        errors=0
+        i=0
+        for pr in predictions:
+                if pr >0.5 :
+                        predicttarget[i]=1
+                else:
+                        predicttarget[i]=0
+                if      predicttarget[i] !=Y_dev[i]:
+                        errors+=1
+                
+	
+	print predictions
+	print Y_dev
+	print errors/float (len(predictions))*100
+	#print train['membership_days']
+	
+
 
 if __name__ == "__main__":
 	train, test, members, songs, songs_extra = load_data()
 	train, test, members = merge_and_fix_data(train, test, songs, songs_extra, members)
-	lgb_model, test = train_and_validate(train, test)
-	generate_predictions(lgb_model, test)
+	train_and_validate(train)
